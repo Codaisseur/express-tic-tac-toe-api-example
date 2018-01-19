@@ -17,19 +17,15 @@ const loadGame = (req, res, next) => {
 }
 
 const getPlayers = (req, res, next) => {
-  Promise.all(req.game.players.map(player => User.findById(player.userId)))
+  Promise.all([req.game.playerOneId, req.game.playerTwoId].map(playerId => User.findById(playerId)))
     .then((users) => {
       // Combine player data and user's name
-      req.players = req.game.players.map((player) => {
-        const { name } = users
-          .filter((u) => u._id.toString() === player.userId.toString())[0]
-
-        return {
-          userId: player.userId,
-          pairs: player.pairs,
-          name
-        }
-      })
+      req.players = users
+        .filter(u => !!u)
+        .map(u => ({
+          userId: u._id,
+          name: u.name
+        }))
       next()
     })
     .catch((error) => next(error))
@@ -46,15 +42,26 @@ module.exports = io => {
       if (!req.game) { return next() }
 
       const userId = req.account._id
+      const { playerOneId, playerTwoId } = req.game
 
-      if (req.game.players.filter((p) => p.userId.toString() === userId.toString()).length > 0) {
+      const isPlayerOne = playerOneId && playerOneId.toString() === userId.toString()
+      const isPlayerTwo = playerTwoId && playerTwoId.toString() === userId.toString()
+
+      if (isPlayerOne || isPlayerTwo) {
         const error = Error.new('You already joined this game!')
         error.status = 401
         return next(error)
       }
 
+      if (!!playerOneId && !!playerTwoId) {
+        const error = Error.new('Sorry game is full!')
+        error.status = 401
+        return next(error)
+      }
+
       // Add the user to the players
-      req.game.players.push({ userId, pairs: [] })
+      if (!playerOneId) req.game.playerOneId = userId
+      if (!playerTwoId) req.game.playerTwoId = userId
 
       req.game.save()
         .then((game) => {
@@ -81,15 +88,21 @@ module.exports = io => {
       if (!req.game) { return next() }
 
       const userId = req.account._id
-      const currentPlayer = req.game.players.filter((p) => p.userId.toString() === userId.toString())[0]
+      const { playerOneId, playerTwoId } = req.game
 
-      if (!currentPlayer) {
-        const error = Error.new('You are not a player of this game!')
+      const isPlayerOne = playerOneId.toString() === userId.toString()
+      const isPlayerTwo = playerTwoId.toString() === userId.toString()
+
+      if (!isPlayerOne || !isPlayerTwo) {
+        const error = Error.new('You are not a player in this game!')
         error.status = 401
         return next(error)
       }
 
-      req.game.players = req.game.players.filter((p) => p.userId.toString() !== userId.toString())
+      // Add the user to the players
+      if (isPlayerOne) req.game.playerOneId = null
+      if (isPlayerTwo) req.game.playerTwoId = null
+
       req.game.save()
         .then((game) => {
           req.game = game
