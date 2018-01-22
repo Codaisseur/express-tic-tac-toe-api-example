@@ -64,15 +64,46 @@ module.exports = io => {
     })
     .patch('/games/:id', authenticate, (req, res, next) => {
       const id = req.params.id
-      const patchForGame = req.body
+      const userId = req.account._id.toString()
+      const usersIntent = req.body // e.g. { claim: squareIndex }
 
       Game.findById(id)
         .then((game) => {
           if (!game) { return next() }
 
-          const updatedGame = { ...game, ...patchForGame }
+          if (usersIntent.claim || usersIntent.claim === 0) {
+            const playerOneId = game.playerOneId.toString()
+            const playerTwoId = game.playerTwoId.toString()
 
-          Game.findByIdAndUpdate(id, { $set: updatedGame }, { new: true })
+            // your turn?
+            const turn = game.board.filter((s) => !!s).length % 2
+            const hasTurn = (turn === 0 && playerOneId === userId) ||
+              (turn === 1 && playerTwoId === userId)
+            if (!hasTurn) {
+              const err = new Error('It is not your turn... :/')
+              err.status = 422
+              return next(err)
+            }
+
+            // square available?
+            const squareAvailable = usersIntent.claim >= 0 &&
+              usersIntent.claim < 9 &&
+              !game.board[usersIntent.claim]
+            if (!squareAvailable) {
+              const err = new Error('That square is already taken lol')
+              err.status = 422
+              return next(err)
+            }
+
+            // are you a winner after this?
+            const playerSymbol = turn === 0 ? 'o' : 'x'
+            game.board[usersIntent.claim] = playerSymbol
+
+            // is it a draw after this?
+            //etc.
+          }
+
+          Game.findByIdAndUpdate(id, { $set: game }, { new: true })
             .then((game) => {
               io.emit('action', {
                 type: 'GAME_UPDATED',
